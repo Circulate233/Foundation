@@ -81,7 +81,7 @@ artifacts {
 publishing {
     repositories {
         maven {
-            name = "cleanroom"
+            name = "outlands"
             url = "https://maven.outlands.top/releases"
             credentials(PasswordCredentials)
             authentication {
