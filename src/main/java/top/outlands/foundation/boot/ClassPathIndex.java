@@ -27,6 +27,8 @@ import java.util.zip.ZipFile;
  * the jars that have the package instead of every classpath entry. Answers what
  * {@link java.net.URLClassLoader#findResource(String)} answers for a class file, or {@link #UNKNOWN}.
  */
+
+@SuppressWarnings("deprecation")
 public final class ClassPathIndex {
 
     /** Returned by {@link #lookup(String)} when the caller has to use the regular findResource lookup. */
@@ -201,14 +203,7 @@ public final class ClassPathIndex {
         return ((JarSource) source).packages();
     }
 
-    private static final class DirSource implements Source {
-        private final URL base;
-        private final File dir;
-
-        DirSource(URL base, File dir) {
-            this.base = base;
-            this.dir = dir;
-        }
+    private record DirSource(URL base, File dir) implements Source {
 
         @Override
         public URL find(String path) {
@@ -251,18 +246,10 @@ public final class ClassPathIndex {
         }
     }
 
-    private static final class JarSource implements Source {
-        /** Jar URL, which Class-Path entries are resolved against. */
-        private final URL source;
-        /** {@code jar:...!/} URL, which resources are resolved against. */
-        private final URL base;
-        private final JarFile file;
-
-        JarSource(URL source, URL base, JarFile file) {
-            this.source = source;
-            this.base = base;
-            this.file = file;
-        }
+    /**
+     * @param source  Jar URL, which Class-Path entries are resolved against. 
+     * @param base  {@code jar:...!/} URL, which resources are resolved against.  */
+    private record JarSource(URL source, URL base, JarFile file) implements Source {
 
         @Override
         public URL find(String path) {
@@ -341,7 +328,7 @@ public final class ClassPathIndex {
         for (int i = 0; i < path.length(); i++) {
             final char c = path.charAt(i);
             final boolean plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-                    || c == '/' || c == '.' || c == '_' || c == '-' || c == '$';
+                || c == '/' || c == '.' || c == '_' || c == '-' || c == '$';
             if (!plain) {
                 return false;
             }

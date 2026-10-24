@@ -224,16 +224,17 @@ public class ActualClassLoader extends URLClassLoader {
             final int lastDot = untransformedName.lastIndexOf('.');
             final String packageName = lastDot == -1 ? "" : untransformedName.substring(0, lastDot);
             final String fileName = untransformedName.replace('.', '/').concat(".class");
-            URLConnection urlConnection = findCodeSourceConnectionFor(fileName);
+            final URL classFile = findClassFile(fileName);
+            final JarInfo jarInfo = jarInfoFor(classFile);
 
             CodeSigner[] signers = null;
             Manifest manifest = null;
             Package pkg = null;
             if (lastDot > -1 && !untransformedName.startsWith("net.minecraft.")) {
-                if (urlConnection instanceof JarURLConnection jarURLConnection) {
-                    final JarFile jarFile = jarURLConnection.getJarFile();
-                    manifest = jarFile.getManifest();
+                if (jarInfo != null) {
+                    manifest = jarInfo.manifest;
                     if (manifest != null) {
+                        final JarFile jarFile = jarInfo.jarFile;
                         final JarEntry entry = jarFile.getJarEntry(fileName);
 
                         pkg = getDefinedPackage(packageName);
@@ -241,14 +242,14 @@ public class ActualClassLoader extends URLClassLoader {
                         signers = entry == null ? null : entry.getCodeSigners();
                         if (pkg == null) {
                             try {
-                                definePackage(packageName, manifest, jarURLConnection.getJarFileURL());
+                                definePackage(packageName, manifest, jarInfo.jarUrl);
                             } catch (IllegalArgumentException iae) {
                                 if (getDefinedPackage(packageName) == null) {
                                     throw iae;
                                 }
                             }
                         } else {
-                            if (pkg.isSealed() && !pkg.isSealed(jarURLConnection.getJarFileURL())) {
+                            if (pkg.isSealed() && !pkg.isSealed(jarInfo.jarUrl)) {
                                 LOGGER.warn("The jar file {} is trying to seal already secured path {}", jarFile.getName(), packageName);
                             } else if (isSealed(packageName, manifest)) {
                                 LOGGER.warn("The jar file {} has a security seal for path {}, but that path is defined and not secure", jarFile.getName(), packageName);
@@ -265,8 +266,8 @@ public class ActualClassLoader extends URLClassLoader {
                                 throw iae;
                             }
                         }
-                    } else if (pkg.isSealed() && urlConnection != null) {
-                        LOGGER.warn("The URL {} is defining elements for sealed path {}", urlConnection.getURL(), packageName);
+                    } else if (pkg.isSealed() && classFile != null) {
+                        LOGGER.warn("The URL {} is defining elements for sealed path {}", classFile, packageName);
                     }
                 }
             }
@@ -274,9 +275,7 @@ public class ActualClassLoader extends URLClassLoader {
             if (pkg == null && lastDot > -1) {
                 pkg = getDefinedPackage(packageName);
             }
-            final URL codeSourceUrl = urlConnection == null ? null
-                : urlConnection instanceof JarURLConnection jarURLConnection ? jarURLConnection.getJarFileURL()
-                : urlConnection.getURL();
+            final URL codeSourceUrl = jarInfo != null ? jarInfo.jarUrl : classFile;
             LoadingContext.push(pkg, manifest, codeSourceUrl);
             contextPushed = true;
 
@@ -284,7 +283,7 @@ public class ActualClassLoader extends URLClassLoader {
                 try {
                     transformedClass = getClassBytes(name);
                     transformedClass = runExplicitTransformers(transformedName, transformedClass);
-                    final CodeSource codeSource = urlConnection == null ? null : new CodeSource(urlConnection.getURL(), signers);
+                    final CodeSource codeSource = classFile == null ? null : new CodeSource(classFile, signers);
                     if (transformedClass == null) throw new ClassNotFoundException(transformedName);
                     final Class<?> clazz = super.defineClass(name, transformedClass, 0, transformedClass.length, codeSource);
                     cachedClasses.put(name, clazz);
@@ -303,7 +302,7 @@ public class ActualClassLoader extends URLClassLoader {
                 saveClassBytes(transformedClass, transformedName);
             }
 
-            final CodeSource codeSource = urlConnection == null ? null : new CodeSource(urlConnection.getURL(), signers);
+            final CodeSource codeSource = classFile == null ? null : new CodeSource(classFile, signers);
             if (transformedClass == null) throw new ClassNotFoundException();
             final Class<?> clazz = defineClass(transformedName, transformedClass, 0, transformedClass.length, codeSource);
             cachedClasses.put(transformedName, clazz);
@@ -432,6 +431,51 @@ public class ActualClassLoader extends URLClassLoader {
 
     public List<URL> getSources() {
         return sources;
+    }
+
+    /** A jar of the classpath, with its manifest kept strongly referenced. */
+    private record JarInfo(JarFile jarFile, Manifest manifest, URL jarUrl) {
+    }
+
+    /**
+     * {@link JarURLConnection#getJarFile()} and {@link JarFile#getManifest()} are constant per jar but
+     * expensive per class: the first parses the URL and looks the jar up again, the second re-parses the
+     * manifest whenever the JDK's SoftReference to it has been collected.
+     */
+    private final Map<String, JarInfo> jarInfos = new ConcurrentHashMap<>();
+
+    /**
+     * @param classFile class file URL from {@link #findClassFile(String)}
+     * @return its jar, or null for a directory on the classpath or no file at all
+     */
+    private JarInfo jarInfoFor(URL classFile) {
+        if (classFile == null || !"jar".equals(classFile.getProtocol())) {
+            return null;
+        }
+        final String file = classFile.getFile();
+        final int separator = file.indexOf("!/");
+        if (separator < 0) {
+            return null;
+        }
+        final String key = "jar:" + file.substring(0, separator);
+        final JarInfo cached = jarInfos.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        final JarInfo loaded;
+        try {
+            final URLConnection connection = classFile.openConnection();
+            if (!(connection instanceof JarURLConnection jarConnection)) {
+                return null;
+            }
+            final JarFile jarFile = jarConnection.getJarFile();
+            loaded = new JarInfo(jarFile, jarFile.getManifest(), jarConnection.getJarFileURL());
+        } catch (IOException | RuntimeException e) {
+            LOGGER.debug("Could not read the jar of {}", classFile, e);
+            return null;
+        }
+        final JarInfo previous = jarInfos.putIfAbsent(key, loaded);
+        return previous == null ? loaded : previous;
     }
 
     /**
@@ -595,7 +639,7 @@ public class ActualClassLoader extends URLClassLoader {
     public Set<String> getInvalidClasses() {
         return Collections.unmodifiableSet(invalidClasses);
     }
-    
+
     public void registerInvalidClass(String name) {
         LOGGER.debug("Registering invalid class {}", name);
         invalidClasses.add(name);
