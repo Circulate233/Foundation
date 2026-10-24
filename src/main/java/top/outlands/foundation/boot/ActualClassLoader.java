@@ -58,6 +58,9 @@ public class ActualClassLoader extends URLClassLoader {
     private final Map<String, byte[]> resourceCache = new ConcurrentHashMap<>(1024);
     private final Set<String> negativeResourceCache = ConcurrentHashMap.newKeySet();
 
+    /** Answers class file lookups; other resources keep using {@link #findResource(String)}. */
+    private final ClassPathIndex classPathIndex;
+
     private final ThreadLocal<byte[]> loadBuffer = new ThreadLocal<>();
 
     private static final String[] RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"};
@@ -81,6 +84,7 @@ public class ActualClassLoader extends URLClassLoader {
         }
         this.sources = new CopyOnWriteArrayList<>(Arrays.asList(sources));
         this.sourceSet.addAll(this.sources.stream().map(URL::toExternalForm).toList());
+        this.classPathIndex = new ClassPathIndex(sources);
         addClassLoaderInclusion("org.objectweb.asm.");
         addClassLoaderInclusion("org.spongepowered.asm.");
         addClassLoaderInclusion("com.llamalad7.mixinextras.");
@@ -383,7 +387,7 @@ public class ActualClassLoader extends URLClassLoader {
     }
 
     protected URLConnection findCodeSourceConnectionFor(final String name) {
-        final URL resource = findResource(name);
+        final URL resource = findClassFile(name);
         if (resource != null) {
             try {
                 return resource.openConnection();
@@ -422,11 +426,21 @@ public class ActualClassLoader extends URLClassLoader {
             super.addURL(url);
             sources.add(url);
             sourceSet.add(url.toExternalForm());
+            classPathIndex.add(url);
         }
     }
 
     public List<URL> getSources() {
         return sources;
+    }
+
+    /**
+     * @param path class file path such as {@code java/lang/Object.class}
+     * @return the URL of the file, or null if no classpath entry has it
+     */
+    protected URL findClassFile(String path) {
+        final Object indexed = classPathIndex.lookup(path);
+        return indexed == ClassPathIndex.UNKNOWN ? findResource(path) : (URL) indexed;
     }
 
     protected byte[] readFully(InputStream stream) throws IOException {
@@ -522,7 +536,7 @@ public class ActualClassLoader extends URLClassLoader {
         InputStream classStream = null;
         try {
             final String resourcePath = name.replace('.', '/').concat(".class");
-            final URL classResource = findResource(resourcePath);
+            final URL classResource = findClassFile(resourcePath);
 
             if (classResource == null) {
                 negativeResourceCache.add(name);
@@ -557,7 +571,7 @@ public class ActualClassLoader extends URLClassLoader {
         InputStream classStream = null;
         try {
             final String resourcePath = name.replace('.', '/').concat(".class");
-            final URL classResource = findResource(resourcePath);
+            final URL classResource = findClassFile(resourcePath);
 
             if (classResource == null) {
                 return null;
