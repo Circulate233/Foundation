@@ -90,7 +90,6 @@ public class ActualClassLoader extends URLClassLoader {
         addClassLoaderInclusion("com.llamalad7.mixinextras.");
         addClassLoaderInclusion("net.minecraft");
         addClassLoaderInclusion("top.outlands.foundation.");
-        addClassLoaderInclusion("org.lwjgl");
         addClassLoaderInclusion("com.cleanroommc.");
         addClassLoaderInclusion("ibxm.");
         addClassLoaderInclusion("paulscode.sound.codecs.");
