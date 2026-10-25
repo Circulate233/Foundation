@@ -21,15 +21,19 @@ public final class ManifestCPParser {
 
 
     /**
-     * Gets all manifest cp from a list of URL and add them to the end of same list
+     * Gets all manifest cp from a list of URL and appends them to the end of the same list.
+     *
+     * <p>The result is a mutable copy: callers pass immutable lists ({@code List.of(...)} in the
+     * {@code LaunchClassLoader(URL[])} constructor), and appending to those fails.
      */
     public static List<URL> parse(List<URL> roots) {
+        final List<URL> urls = new ArrayList<>(roots);
         final List<URL> manifestUrls = new ArrayList<>();
-        for (URL root : roots) {
+        for (URL root : urls) {
             manifestUrls.addAll(manifestClassPath(root));
         }
-        roots.addAll(manifestUrls);
-        return roots;
+        urls.addAll(manifestUrls);
+        return urls;
     }
 
     /**

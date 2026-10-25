@@ -49,9 +49,16 @@ public class Foundation {
             breakModuleAndReflection();
             if (Launch.classLoader == null) {
                 boolean loadsall = Boolean.parseBoolean(System.getProperty("foundation.loadsall", "false"));
+                // The install step, before any game class can be looked up: it makes sure a patched Minecraft
+                // exists on disk and, when it does, the overlay jar goes first on the classpath. A launcher never
+                // installs anything for us - in the versions that do this, the component's mainClass is what
+                // materialises the artifacts, and this is that mainClass.
+                final java.util.Optional<java.nio.file.Path> patched = top.outlands.foundation.install.PatchInstaller.prepare();
+                final java.net.URL[] sources = top.outlands.foundation.install.Classpath.launchClasspath(patched.orElse(null));
                 Launch.classLoader = loadsall
-                    ? new LoadsAllClassLoader(ClassLoader.getSystemClassLoader())
-                    : new LaunchClassLoader(ClassLoader.getSystemClassLoader());
+                    ? new LoadsAllClassLoader(sources)
+                    : new LaunchClassLoader(sources);
+                patched.ifPresent(path -> System.setProperty(top.outlands.foundation.install.PatchInstaller.PATCHED_JAR_PROPERTY, path.toString()));
             }
             Object handler = Class.forName("top.outlands.foundation.LaunchHandler", true, Launch.classLoader).getConstructor().newInstance();
             MethodHandles.lookup()
