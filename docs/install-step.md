@@ -107,6 +107,17 @@ vanilla jar behind it, unchanged.
 | later launches | two central-directory scans, ~2-3 ms |
 | classes read on later launches beyond what the game does anyway | none |
 
+Foundation side, run for real on a pack launch (Prism's classpath, no Prism UI):
+
+| | |
+|---|---|
+| first launch | applier ran, artifact + marker written, 542 ms including the child JVM |
+| second launch | "reusing ... aggregate 1782657135, 2839327 bytes" |
+| artifact corrupted by 7 bytes | fingerprint mismatch detected, reinstalled to 2839327 bytes |
+| `-Doutlands.install=off` | runtime patching, no install, same launch result |
+| dumps of two installs | identical |
+| dumps of install vs runtime patching | differs in three loader classes only |
+
 and the equivalence check, run for real: two launches of one instance, the first with runtime patching and
 the second with the overlay installed and `outlands.patchedJar` pointing at it, both with
 `foundation.dump=true`. The dumped classes differ in exactly three entries, all loader classes that only the
