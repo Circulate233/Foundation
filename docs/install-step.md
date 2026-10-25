@@ -107,6 +107,12 @@ vanilla jar behind it, unchanged.
 | later launches | two central-directory scans, ~2-3 ms |
 | classes read on later launches beyond what the game does anyway | none |
 
+and the equivalence check, run for real: two launches of one instance, the first with runtime patching and
+the second with the overlay installed and `outlands.patchedJar` pointing at it, both with
+`foundation.dump=true`. The dumped classes differ in exactly three entries, all loader classes that only the
+patching path needs (`ClassPatch`, `ClassPatchReader`, `ByteBufferSeekableSource`); every Minecraft class is
+byte-identical.
+
 ## Loader side (Cleanroom repo, same release train)
 
 * `top.outlands.install.PatchApplier` - a `main` that reads the pack, applies the patches to the vanilla jar and
@@ -115,14 +121,20 @@ vanilla jar behind it, unchanged.
   applier, so the format has a single owner.
 * `ClassPatchManager.setup(Side)` - when `outlands.patchedJar` names an existing file, log "pre-patched by
   foundation" and return without reading the pack. `patches` stays `null`, which makes `applyPatch` a
-  pass-through - no other change in the patch path is needed.
+  pass-through - no other change in the patch path is needed. A property that names something unreadable
+  falls back to the pack.
+* `FMLSanityChecker` - skips its minecraft jar certificate check in that mode. It asserts that
+  `ClientBrandRetriever` lives in a signed Minecraft jar, and a pre-patched run moves that class (and the
+  rest of the patched set) into our overlay, which is unsigned by construction; without the skip the game
+  dies with "CRITICAL TAMPERING WITH MINECRAFT" before the window ever opens. The check exists to notice a
+  tampered vanilla jar, and there is no claim about the vanilla jar left for it to test.
 * Checks that ship with it, in increasing cost:
   - every patch record's input Adler32 is verified against the vanilla class before it is patched; the applier
     fails on a mismatch instead of writing a garbage class (verified against the real 1.12.2 client jar: 1,170 of
     1,170 patchable records match),
   - every written entry is parsed with ASM before the marker is written,
   - a launch with and without `outlands.patchedJar` must load identical class bytes; `foundation.dump=true` already
-    writes every loaded class to disk, so the two runs can be diffed without new tooling.
+    writes every loaded class to disk, so the two runs can be diffed without new tooling. Done, see above.
 
 Order of work matters: the applier has to be **in a published loader jar** before Foundation can call it, and
 the pack's foundation pin has to be bumped before users get it. Nothing breaks in between, because every
