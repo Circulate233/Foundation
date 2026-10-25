@@ -16,9 +16,18 @@ speed. Whatever speed falls out of it is a side effect (see *Phase 2*).
 ```
 <libraries>/                                     walked up from our own jar, see InstallLayout
   top/outlands/outlands/<loaderVersion>/
-    outlands-<loaderVersion>-mc-client-patched.jar   the artifact
+    outlands-<loaderVersion>-mc-client-patched.jar   the artifact (an overlay, see below)
     outlands-<loaderVersion>-mc-client-patched.cache the marker
 ```
+
+The artifact is an **overlay**: it holds only the classes the patches rewrite (1,170 of the client's 1,192 patch
+records for 1.12.2, 2.8MB packed), not a copy of the whole game jar. The rest of Minecraft keeps coming from the
+vanilla jar behind it, untouched. That is not just a size decision - it is what makes the artifact provably
+equivalent to runtime patching, because a full jar would have to be built from our recompiled tree and would
+therefore shadow classes whose bytes differ only by line tables and source file names.
+
+The 22 remaining patch records are `existsAtTarget=false` (classes our patches remove); they have no vanilla
+source and produce no entry.
 
 `<libraries>` is the directory Prism hands us on the classpath (`~/.local/share/PrismLauncher/libraries` for a
 shared instance, `<instance>/libraries` for a self-contained pack). Walking up from
@@ -27,18 +36,40 @@ is skipped and the loader patches at runtime exactly as it does today.
 
 ## Marker
 
-A plain `key=value` file next to the jar, written *after* the jar is complete:
+A plain `key=value` file next to the jar, written *after* the jar is complete. Everything in it comes out of a
+zip **central directory**, so neither writing nor checking it reads the jar contents:
 
 ```
-key=<sha1 of every input: pack, vanilla jar, side, loader jar>
-output.sha1=<sha1 of the produced jar>
-output.size=<bytes>
-written=<epoch seconds>
+format=1
+side=client
+loader.version=2026.10.25
+loader.pack.crc=3060476666    CRC32 of the binpatches.pack.lzma entry inside the loader jar
+input.entries=7957            the launcher's minecraft-1.12.2-client.jar
+input.agg=2580656613
+output.entries=1170
+output.agg=1782657135
+output.size=2839327
+written=1761400000
 ```
 
-`key` decides reuse. `output.sha1` catches a corrupt or half-replaced jar when `outlands.install.verify` is on;
-by default only the size is compared, because the marker is written after an `ATOMIC_MOVE` and hashing 7MB on
-every launch is not worth it.
+An aggregate is a CRC32 over the entries sorted by name, fed `name utf-8`, `crc32` (4 bytes LE) and `size`
+(8 bytes LE). Any changed class changes that entry's CRC32 in the directory, so the aggregate changes with it:
+it is the artifact's fingerprint, and it costs a directory scan instead of a full read.
+
+That is cheaper than what Forge ships and needs no extra pass: Forge's `.cache` files hold `Input:`/`Srg:`/
+`Output:` sha1s of whole jars, whereas we produce the jar ourselves, so its per-entry CRCs are known the moment
+the last entry is written. Measured on this machine, hashing the 7MB artifact and the 10MB vanilla jar is 4.8 and
+5.7 ms of a 17MB read, against 2.5 and 3.0 ms and ~300KB for the two directory scans - small either way, but the
+directory scan does not grow with the size of what it describes.
+
+Reuse needs all four of `loader.version`, `loader.pack.crc`, `side` and `input.agg` to match and the artifact's
+directory to still aggregate to `output.agg` with the recorded entry count and size. Anything else reinstalls.
+
+The aggregates are written by Foundation after the applier returns, never by the applier itself: the aggregate
+algorithm then has exactly one owner and cannot drift between the two repositories.
+
+`outlands.install.verify=deep` additionally decompresses the artifact so the JDK validates every entry CRC. That
+is the thorough check, and it is opt-in because it reads the whole jar.
 
 ## Flow
 
@@ -50,7 +81,8 @@ every launch is not worth it.
      inputs:  vanilla client jar (classpath entry .../minecraft-<ver>-client.jar)
               binpatches.pack.lzma (the classpath jar that carries it - the loader jar)
               side  (client or server, from which jar was found on the classpath)
-     if marker.key == currentKey && jar exists && (verify ? sha1 ok : size ok)
+     if marker matches (loader version, pack crc, side, input.agg) and the jar's directory
+        still aggregates to output.agg with the recorded entry count and size
          -> reuse
      else
          -> run the applier in a child JVM, write tmp, ATOMIC_MOVE, write marker
@@ -64,6 +96,17 @@ The patched jar goes **first**: `LaunchClassLoader(URL[])` already feeds `ClassP
 first hit wins, so no `addURL`/ordering change is needed. Classes the patches do not touch keep coming from the
 vanilla jar behind it, unchanged.
 
+## Measured (1.12.2 client, this machine)
+
+| | |
+|---|---|
+| patch records / entries written / skipped | 1,192 / 1,170 / 22 (`existsAtTarget=false`) |
+| artifact | 2,839,327 bytes, 1,170 entries |
+| input Adler32 mismatches against the launcher's client jar | 0 of 1,170 |
+| first-launch install, including the child JVM | ~0.6 s |
+| later launches | two central-directory scans, ~2-3 ms |
+| classes read on later launches beyond what the game does anyway | none |
+
 ## Loader side (Cleanroom repo, same release train)
 
 * `top.outlands.install.PatchApplier` - a `main` that reads the pack, applies the patches to the vanilla jar and
@@ -73,9 +116,13 @@ vanilla jar behind it, unchanged.
 * `ClassPatchManager.setup(Side)` - when `outlands.patchedJar` names an existing file, log "pre-patched by
   foundation" and return without reading the pack. `patches` stays `null`, which makes `applyPatch` a
   pass-through - no other change in the patch path is needed.
-* Build check: the applier's output for the client side must be byte-identical to the jar `reobfObf` already
-  produces (`reobf-input/outlands-<v>-mc-obf.jar`). That is the regression test, and it costs nothing because
-  the build produces both sides already.
+* Checks that ship with it, in increasing cost:
+  - every patch record's input Adler32 is verified against the vanilla class before it is patched; the applier
+    fails on a mismatch instead of writing a garbage class (verified against the real 1.12.2 client jar: 1,170 of
+    1,170 patchable records match),
+  - every written entry is parsed with ASM before the marker is written,
+  - a launch with and without `outlands.patchedJar` must load identical class bytes; `foundation.dump=true` already
+    writes every loaded class to disk, so the two runs can be diffed without new tooling.
 
 Order of work matters: the applier has to be **in a published loader jar** before Foundation can call it, and
 the pack's foundation pin has to be bumped before users get it. Nothing breaks in between, because every
@@ -87,7 +134,7 @@ missing piece only skips the step (see below).
 |---|---|---|
 | `outlands.install` | `on` | `off` skips the step entirely (runtime patching, today's behaviour) |
 | `outlands.install.dir` | detected | override the cache root, e.g. for testing or a read-only libraries dir |
-| `outlands.install.verify` | `false` | verify `output.sha1` on every launch instead of trusting size |
+| `outlands.install.verify` | `dir` | `dir` scans the central directory (default), `deep` decompresses the artifact and lets the JDK check every entry CRC, `off` trusts the marker |
 | `outlands.patchedJar` | unset | set by Foundation, read by the loader; only a hint, the loader re-checks the file |
 
 ## Failure policy
@@ -101,9 +148,10 @@ to be the reason a game does not start.
 | vanilla jar not on the classpath (dev run, ForgeDev) | skip, log at debug |
 | loader jar without `PatchApplier` (old loader) | applier fails, skip, log at warn |
 | child JVM exits non-zero / times out | delete tmp, skip, log at warn |
-| marker present, jar missing or wrong size | reinstall |
+| marker present, jar missing | reinstall |
 | marker absent, jar present (hand-edited instance) | reinstall |
-| verify on and sha1 differs | reinstall once, then skip |
+| directory aggregate differs from `output.agg` | reinstall once, then skip if it drifts again |
+| vanilla jar or pack crc changed (loader or game update) | reinstall under the new fingerprint |
 | two instances launch at once | both write unique tmp files and `ATOMIC_MOVE`; the outputs are identical, last rename wins |
 
 ## Phase 2 (modern renaming parity, not in this step)
