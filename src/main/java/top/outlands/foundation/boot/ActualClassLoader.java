@@ -87,6 +87,7 @@ public class ActualClassLoader extends URLClassLoader {
         this.classPathIndex = new ClassPathIndex(sources);
         addClassLoaderInclusion("org.objectweb.asm.");
         addClassLoaderInclusion("org.spongepowered.asm.");
+        addClassLoaderInclusion("org.lwjgl.");
         addClassLoaderInclusion("com.llamalad7.mixinextras.");
         addClassLoaderInclusion("net.minecraft");
         addClassLoaderInclusion("top.outlands.foundation.");
@@ -146,6 +147,7 @@ public class ActualClassLoader extends URLClassLoader {
         addClassLoaderExclusion0("top.outlands.foundation.trie.");
         addClassLoaderExclusion0("net.minecraftforge.server.terminalconsole.");
 
+        addTransformerExclusion("org.lwjgl.");
         addTransformerExclusion("org.spongepowered.asm.bridge.");
         addTransformerExclusion("org.spongepowered.asm.lib.");
         addTransformerExclusion("org.spongepowered.asm.launch.");
