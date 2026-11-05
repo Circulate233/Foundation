@@ -560,18 +560,31 @@ public class ActualClassLoader extends URLClassLoader {
         transformerExceptions.remove(toExclude);
     }
 
+    /**
+     * Callers pass class names both in internal ({@code a/b/C}) and binary ({@code a.b.C}) form, but
+     * {@link #getClassBytes(String)} resolves either to the same file. Normalising to the binary form
+     * keeps both spellings on one cache entry instead of reading the class file twice into two arrays.
+     *
+     * @param name a class name, with either {@code .} or {@code /} as package separator
+     * @return the name in binary form, usable as a cache key
+     */
+    private static String cacheKey(String name) {
+        return name.indexOf('/') < 0 ? name : name.replace('/', '.');
+    }
+
     public byte[] getClassBytes(String name) throws IOException {
-        if (negativeResourceCache.contains(name)) {
+        final String key = cacheKey(name);
+        if (negativeResourceCache.contains(key)) {
             return null;
-        } else if (resourceCache.containsKey(name)) {
-            return resourceCache.get(name);
+        } else if (resourceCache.containsKey(key)) {
+            return resourceCache.get(key);
         }
-        if (name.indexOf('.') == -1) {
+        if (key.indexOf('.') == -1) {
             for (final String reservedName : RESERVED_NAMES) {
-                if (name.toUpperCase(Locale.ENGLISH).startsWith(reservedName)) {
-                    final byte[] data = getClassBytes("_" + name);
+                if (key.toUpperCase(Locale.ENGLISH).startsWith(reservedName)) {
+                    final byte[] data = getClassBytes("_" + key);
                     if (data != null) {
-                        resourceCache.put(name, data);
+                        resourceCache.put(key, data);
                         return data;
                     }
                 }
@@ -580,17 +593,17 @@ public class ActualClassLoader extends URLClassLoader {
 
         InputStream classStream = null;
         try {
-            final String resourcePath = name.replace('.', '/').concat(".class");
+            final String resourcePath = key.replace('.', '/').concat(".class");
             final URL classResource = findClassFile(resourcePath);
 
             if (classResource == null) {
-                negativeResourceCache.add(name);
+                negativeResourceCache.add(key);
                 return null;
             }
             classStream = classResource.openStream();
 
             final byte[] data = readFully(classStream);
-            resourceCache.put(name, data);
+            resourceCache.put(key, data);
             return data;
         } finally {
             closeSilently(classStream);
@@ -598,15 +611,16 @@ public class ActualClassLoader extends URLClassLoader {
     }
 
     public byte[] testGetClassBytes(String name) throws IOException {
-        if (resourceCache.containsKey(name)) {
-            return resourceCache.get(name);
+        final String key = cacheKey(name);
+        if (resourceCache.containsKey(key)) {
+            return resourceCache.get(key);
         }
-        if (name.indexOf('.') == -1) {
+        if (key.indexOf('.') == -1) {
             for (final String reservedName : RESERVED_NAMES) {
-                if (name.toUpperCase(Locale.ENGLISH).startsWith(reservedName)) {
-                    final byte[] data = getClassBytes("_" + name);
+                if (key.toUpperCase(Locale.ENGLISH).startsWith(reservedName)) {
+                    final byte[] data = getClassBytes("_" + key);
                     if (data != null) {
-                        resourceCache.put(name, data);
+                        resourceCache.put(key, data);
                         return data;
                     }
                 }
@@ -615,7 +629,7 @@ public class ActualClassLoader extends URLClassLoader {
 
         InputStream classStream = null;
         try {
-            final String resourcePath = name.replace('.', '/').concat(".class");
+            final String resourcePath = key.replace('.', '/').concat(".class");
             final URL classResource = findClassFile(resourcePath);
 
             if (classResource == null) {
@@ -709,7 +723,10 @@ public class ActualClassLoader extends URLClassLoader {
     }
 
     public void clearNegativeEntries(Set<String> entriesToClear) {
-        negativeResourceCache.removeAll(entriesToClear);
+        // negative entries are keyed in binary form, so a slash separated name must be normalised too
+        for (final String entry : entriesToClear) {
+            negativeResourceCache.remove(cacheKey(entry));
+        }
     }
 
     public List<String> getTransformerExclusions() {
