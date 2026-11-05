@@ -69,8 +69,6 @@ public class ActualClassLoader extends URLClassLoader {
     private static final String TARGET = System.getProperty("foundation.target", "");
     private static File dumpSubDir;
     static TransformerHolder transformerHolder = new TransformerHolder();
-    private Map<Package, Manifest> packageManifests = null;
-    private static Manifest EMPTY = new Manifest();
 
 
     public ActualClassLoader(URL[] sources) {
