@@ -1,14 +1,9 @@
 package top.outlands;
 
 import org.junit.jupiter.api.Test;
-import top.outlands.foundation.boot.ActualClassLoader;
 import top.outlands.foundation.boot.PrefixMatcher;
-import top.outlands.foundation.trie.PrefixTrie;
-import top.outlands.foundation.trie.TrieNode;
 
-import java.net.URL;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -132,53 +127,6 @@ class PrefixMatcherTest {
         assertTrue(matcher.matches("org.apache.commons.io.IOUtils"));
         assertTrue(matcher.matches("com.google.gson.Gson"));
         assertFalse(matcher.matches("com.other.Thing"));
-    }
-
-    /**
-     * Migration guard: for the prefix sets {@link ActualClassLoader} really uses, the matcher must
-     * answer exactly like the trie it replaced. Can be deleted together with the trie package.
-     */
-    @Test
-    void parityWithPrefixTrieOnTheRealConfiguration() {
-        ActualClassLoader loader = new ActualClassLoader(
-                new URL[0], ActualClassLoader.class.getClassLoader());
-
-        List<String> prefixes = new ArrayList<>();
-        prefixes.addAll(ActualClassLoader.classLoaderInclusions.prefixes());
-        prefixes.addAll(ActualClassLoader.classLoaderExceptions.prefixes());
-        prefixes.addAll(ActualClassLoader.transformerExceptions.prefixes());
-        prefixes.add("some.random.mod.asm.");     // as if a mod registered one at runtime
-
-        PrefixTrie<Boolean> trie = new PrefixTrie<>();
-        PrefixMatcher matcher = new PrefixMatcher();
-        for (String prefix : prefixes) {
-            trie.put(prefix, Boolean.TRUE);
-            matcher.add(prefix);
-        }
-
-        List<String> probes = new ArrayList<>(List.of(
-                "net.minecraft.client.Minecraft", "net.minecraftforge.fml.common.FMLCommonHandler",
-                "org.objectweb.asm.ClassReader", "com.google.common.collect.ImmutableList",
-                "com.google.gson.Gson", "org.spongepowered.asm.mixin.Mixin",
-                "com.mojang.blaze3d.platform.GlStateManager", "javax.annotation.Nullable",
-                "net.minecraft.launchwrapper.Launch", "top.outlands.foundation.boot.ActualClassLoader",
-                "top.outlands.foundation.boot.PrefixMatcher", "some.random.mod.asm.Transformer",
-                "com.example.mod.asm.CorePlugin", "io.github.somemod.Thing",
-                "org.lwjgl.system.MemoryUtil", "zone.rong.mixinbooter.MixinBooterPlugin"));
-        for (String prefix : prefixes) {
-            probes.add(prefix + "Sub.Class");
-            probes.add(prefix);
-        }
-
-        for (String name : probes) {
-            TrieNode<Boolean> node = trie.getFirstKeyValueNode(name);
-            boolean expected = node != null && node.getValue();
-            assertEquals(expected, matcher.matches(name), "lookup mismatch for " + name);
-        }
-        assertEquals(new HashSet<>(prefixes), new HashSet<>(matcher.prefixes()),
-                "both structures must hold the same prefixes");
-        assertEquals(new HashSet<>(prefixes), new HashSet<>(trie.getRoot().getKeyValueNodes().stream()
-                .map(TrieNode::getKey).toList()));
     }
 
     @Test

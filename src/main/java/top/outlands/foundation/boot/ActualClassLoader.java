@@ -142,7 +142,6 @@ public class ActualClassLoader extends URLClassLoader {
         addClassLoaderExclusion0("net.minecraft.launchwrapper.Launch");
         addClassLoaderExclusion0("top.outlands.foundation.boot.");
         addClassLoaderExclusion0("top.outlands.foundation.function.");
-        addClassLoaderExclusion0("top.outlands.foundation.trie.");
         addClassLoaderExclusion0("net.minecraftforge.server.terminalconsole.");
 
         addTransformerExclusion("org.lwjgl.");
@@ -553,8 +552,7 @@ public class ActualClassLoader extends URLClassLoader {
 
     public void removeTransformerExclusion(String toExclude) {
         LOGGER.debug("Removing transformer exclusion {}", toExclude);
-        // the prefix is really removed: it stops matching and getTransformerExclusions() no longer
-        // lists it (the trie used a "false" value that kept shadowing longer matching prefixes)
+        // the prefix is really removed: it stops matching and getTransformerExclusions() no longer lists it
         transformerExceptions.remove(toExclude);
     }
 
